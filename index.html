@@ -1,0 +1,1035 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Doodle Sluggers v0.1</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#071522;color:white;font:15px system-ui,Arial;overflow:hidden}
+canvas{display:block}
+#hud{position:fixed;top:12px;left:12px;right:12px;display:flex;justify-content:space-between;gap:8px;pointer-events:none;z-index:2}
+.chip{background:#071b30e8;border:1px solid #7292b0;padding:10px;border-radius:12px;font-weight:bold}
+#msg{position:fixed;top:85px;left:50%;transform:translateX(-50%);text-align:center;background:#061729e8;border:1px solid #83a8c6;border-radius:12px;padding:12px 22px;min-width:260px;z-index:2;pointer-events:none}
+#msg strong{display:block;font-size:22px;color:#ffda72}
+#msg small{color:#d8e6f7}
+#aim{position:fixed;left:50%;top:50%;width:32px;height:32px;border:2px solid #ffe483;border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:2}
+#aim:after{content:"+";position:absolute;left:8px;top:1px;font-size:21px}
+#power{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#061729e8;border:1px solid #86a6c5;border-radius:12px;padding:10px 18px;z-index:2;text-align:center;pointer-events:none}
+#panel{position:fixed;inset:0;background:#06121bf0;display:grid;place-items:center;z-index:10;padding:15px;overflow:auto}
+#panel[hidden],#aim[hidden]{display:none}
+#menu{width:min(620px,96vw);background:#142a40;border:1px solid #628db1;border-radius:20px;padding:24px}
+h1{font-size:clamp(28px,6vw,45px);margin:0;color:#ffd16e}
+p{color:#d0e0ef}
+label{display:block;margin-top:15px;font-weight:700}
+select,button{font:inherit;border-radius:9px;padding:11px;color:white}
+select{width:100%;margin-top:6px;background:#0c1c2c;border:1px solid #7593ad}
+button{border:0;background:#2476cd;cursor:pointer;font-weight:800}
+button:hover{filter:brightness(1.13)}
+#start{width:100%;margin-top:20px;background:#eaa92d;color:#101b29;font-size:19px}
+.keys{font-size:13px;line-height:1.7;background:#091d2f;border-radius:10px;padding:12px;margin-top:15px;color:#c8dbef}
+#toast{position:fixed;top:170px;left:50%;transform:translateX(-50%);color:#ffe17b;font-weight:900;font-size:23px;text-shadow:0 2px 8px black;z-index:3;pointer-events:none;text-align:center}
+#help{position:fixed;bottom:12px;right:12px;font-size:12px;background:#061729cf;padding:9px 13px;border-radius:9px;z-index:2;pointer-events:none}
+@media(max-width:700px){#hud{font-size:11px}.chip{padding:7px}#help{display:none}}
+</style>
+</head>
+<body>
+
+<div id="hud">
+<div class="chip" id="score">YOU 0 — 0 CPU</div>
+<div class="chip" id="stats">1 ▲ • 0 outs</div>
+<div class="chip" id="bases">◇ ◇ ◇</div>
+</div>
+
+<div id="msg">
+<strong>DOODLE SLUGGERS</strong>
+<small>Ready to play?</small>
+</div>
+
+<div id="aim" hidden></div>
+<div id="toast"></div>
+<div id="power">Choose a mode to begin</div>
+<div id="help"></div>
+
+<div id="panel">
+<div id="menu">
+<h1>⚾ DOODLE SLUGGERS</h1>
+<p>Wildcard Studios • 3D Arcade Baseball • v0.1</p>
+
+<label>CPU difficulty
+<select id="difficulty">
+<option value="rookie">Rookie — Easy</option>
+<option value="amateur" selected>Amateur — Normal</option>
+<option value="pro">Pro — Hard</option>
+<option value="legend">Legend — Extreme</option>
+</select>
+</label>
+
+<label>Game mode
+<select id="mode">
+<option value="both">Batting + Fielding</option>
+<option value="bat">Batting Only</option>
+<option value="field">Fielding Only</option>
+</select>
+</label>
+
+<label>Defensive position
+<select id="position">
+<option value="P">Pitcher</option>
+<option value="C">Catcher</option>
+<option value="1B">First Base</option>
+<option value="2B">Second Base</option>
+<option value="3B">Third Base</option>
+<option value="SS" selected>Shortstop</option>
+<option value="LF">Left Field</option>
+<option value="CF">Centre Field</option>
+<option value="RF">Right Field</option>
+</select>
+</label>
+
+<div class="keys">
+<b>BATTING</b> — Aim with mouse, click or Enter to swing<br>
+<b>BASERUNNING</b> — Spam Space to sprint, W advance, S stop, Shift slide<br>
+<b>FIELDING</b> — WASD move, hold Shift to focus and catch, Space dive<br>
+<b>OTHER</b> — P pause, Escape menu<br><br>
+Fielding has 2-metre catch assistance and a 75% accurate landing prediction.
+</div>
+
+<button id="start">PLAY BALL!</button>
+</div>
+</div>
+
+<script type="module">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js";
+
+const $=id=>document.getElementById(id);
+const clamp=THREE.MathUtils.clamp;
+const rand=(a,b)=>a+Math.random()*(b-a);
+const pick=a=>a[Math.floor(Math.random()*a.length)];
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x89c8f3);
+scene.fog=new THREE.Fog(0x89c8f3,145,260);
+
+const camera=new THREE.PerspectiveCamera(65,innerWidth/innerHeight,.1,500);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true;
+document.body.prepend(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xffffff,0x426d52,2));
+
+const sun=new THREE.DirectionalLight(0xffffff,2.3);
+sun.position.set(-30,75,40);
+sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.left=-110;
+sun.shadow.camera.right=110;
+sun.shadow.camera.top=110;
+sun.shadow.camera.bottom=-110;
+scene.add(sun);
+
+const mat=c=>new THREE.MeshStandardMaterial({color:c,roughness:.84});
+const grass=mat(0x398b53);
+const dirt=mat(0xc9a06b);
+const chalk=mat(0xfff4d6);
+const white=mat(0xfaf7e9);
+const red=mat(0xe84949);
+const blue=mat(0x3976d5);
+const dark=mat(0x182d42);
+
+function box(w,h,d,m,x,y,z){
+ const o=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);
+ o.position.set(x,y,z);
+ o.castShadow=true;
+ o.receiveShadow=true;
+ scene.add(o);
+ return o;
+}
+
+function sphere(r,m,x,y,z){
+ const o=new THREE.Mesh(new THREE.SphereGeometry(r,16,12),m);
+ o.position.set(x,y,z);
+ o.castShadow=true;
+ scene.add(o);
+ return o;
+}
+
+function line(a,b,m=chalk,width=.17){
+ const v=new THREE.Vector3().subVectors(b,a);
+ const o=new THREE.Mesh(new THREE.BoxGeometry(width,.035,v.length()),m);
+ o.position.copy(a).add(b).multiplyScalar(.5);
+ o.position.y=.075;
+ o.rotation.y=Math.atan2(v.x,v.z);
+ scene.add(o);
+}
+
+const home=new THREE.Vector3(0,0,0);
+const first=new THREE.Vector3(21,0,-21);
+const second=new THREE.Vector3(0,0,-42);
+const third=new THREE.Vector3(-21,0,-21);
+const bases=[home,first,second,third];
+
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(320,320),grass);
+ground.rotation.x=-Math.PI/2;
+ground.receiveShadow=true;
+scene.add(ground);
+
+const infield=new THREE.Mesh(new THREE.CircleGeometry(31,64),dirt);
+infield.rotation.x=-Math.PI/2;
+infield.position.set(0,.02,-21);
+scene.add(infield);
+
+const mound=new THREE.Mesh(new THREE.CylinderGeometry(3,3,.25,28),dirt);
+mound.position.set(0,.15,-19);
+scene.add(mound);
+
+box(1.2,.12,.3,white,0,.34,-19);
+
+for(const b of bases)box(1.2,.12,1.2,white,b.x,.17,b.z);
+
+line(home,first);
+line(first,second);
+line(second,third);
+line(third,home);
+line(home,new THREE.Vector3(93,0,-93),chalk,.14);
+line(home,new THREE.Vector3(-93,0,-93),chalk,.14);
+
+for(let i=1;i<80;i++){
+ const a=(i-1)/79*Math.PI;
+ const b=i/79*Math.PI;
+ line(
+  new THREE.Vector3(105*Math.cos(a),0,-105*Math.sin(a)),
+  new THREE.Vector3(105*Math.cos(b),0,-105*Math.sin(b)),
+  dark,.8
+ );
+}
+
+for(let i=0;i<26;i++){
+ const a=i/25*Math.PI;
+ const x=119*Math.cos(a);
+ const z=-119*Math.sin(a);
+ box(8,8,2,mat(i%2?0x233c55:0x2c5068),x,3.8,z).rotation.y=-a;
+}
+
+function person(color,x,z){
+ const g=new THREE.Group();
+
+ const torso=new THREE.Mesh(
+  new THREE.CylinderGeometry(.58,.5,1.35,10),mat(color)
+ );
+ torso.position.y=1.55;
+ g.add(torso);
+
+ const head=new THREE.Mesh(
+  new THREE.SphereGeometry(.43,12,10),mat(0xf3bf94)
+ );
+ head.position.y=2.55;
+ g.add(head);
+
+ const cap=new THREE.Mesh(
+  new THREE.CylinderGeometry(.46,.47,.22,12),mat(color)
+ );
+ cap.position.y=2.91;
+ g.add(cap);
+
+ for(const dx of [-.24,.24]){
+  const leg=new THREE.Mesh(new THREE.BoxGeometry(.28,.85,.35),dark);
+  leg.position.set(dx,.45,0);
+  g.add(leg);
+ }
+
+ g.position.set(x,0,z);
+ scene.add(g);
+ return g;
+}
+
+const pitcher=person(0xd74b50,0,-19);
+const batter=person(0x3478d9,-1.4,1.6);
+const runner=person(0x3478d9,0,0);
+const fielder=person(0x3478d9,0,-42);
+
+runner.visible=false;
+fielder.visible=false;
+
+const defenders={
+ P:[0,-19],
+ C:[0,3],
+ "1B":[23,-23],
+ "2B":[11,-34],
+ "3B":[-23,-23],
+ SS:[-11,-34],
+ LF:[-48,-62],
+ CF:[0,-78],
+ RF:[48,-62]
+};
+
+for(const [id,p] of Object.entries(defenders)){
+ if(id!=="P"&&id!=="C")person(0xd74b50,p[0],p[1]);
+}
+
+const ball=sphere(.35,white,0,1.5,-19);
+
+const marker=new THREE.Mesh(
+ new THREE.RingGeometry(1.7,2.05,40),
+ new THREE.MeshBasicMaterial({color:0xffdd63,side:THREE.DoubleSide})
+);
+marker.rotation.x=-Math.PI/2;
+marker.position.y=.12;
+scene.add(marker);
+marker.visible=false;
+
+let state="menu";
+let phaseT=0;
+let paused=false;
+let mode="both";
+let difficulty="amateur";
+let position="SS";
+
+let inning=1;
+let half="top";
+let outs=0;
+let strikes=0;
+let balls=0;
+let score=[0,0];
+let occupied=[false,false,false];
+
+let currentHit=null;
+let runDist=0;
+let runTarget=1;
+let runSpeed=0;
+let runChoice="stop";
+let runStamina=0;
+let sliding=false;
+
+let powerUp="";
+let powerTurns=0;
+
+let lastSpace=-5;
+let focus=false;
+let catchQueued=false;
+let fieldEnd=0;
+let fieldTarget=new THREE.Vector3();
+let actualTarget=new THREE.Vector3();
+let predictAccurate=true;
+
+let pitchSwing=false;
+let pitchType="";
+let pitchSpeed=1;
+let aimX=0;
+let aimY=0;
+
+const keys={};
+
+const cfg={
+ rookie:{pitch:1.15,window:.55,defense:.28,hit:.75},
+ amateur:{pitch:1.55,window:.38,defense:.49,hit:.61},
+ pro:{pitch:1.9,window:.27,defense:.7,hit:.5},
+ legend:{pitch:2.2,window:.2,defense:.83,hit:.4}
+};
+
+function say(title,subtitle=""){
+ $("msg").innerHTML=
+  `<strong>${title}</strong><small>${subtitle}</small>`;
+}
+
+let toastTimer;
+function toast(t){
+ $("toast").textContent=t;
+ clearTimeout(toastTimer);
+ toastTimer=setTimeout(()=>{$("toast").textContent=""},1900);
+}
+
+function updateHud(){
+ $("score").textContent=`YOU ${score[0]} — ${score[1]} CPU`;
+ $("stats").textContent=
+ `${inning}${half==="top"?" ▲":" ▼"} • ${outs} outs • ${balls}-${strikes}`;
+ $("bases").textContent=occupied.map(x=>x?"◆":"◇").join(" ");
+}
+
+function smoothCam(pos,look,dt,speed=4){
+ camera.position.lerp(pos,Math.min(1,dt*speed));
+ const direction=new THREE.Vector3();
+ camera.getWorldDirection(direction);
+ const target=look.clone().sub(camera.position).normalize();
+ direction.lerp(target,Math.min(1,dt*speed));
+ camera.lookAt(camera.position.clone().add(direction));
+}
+
+function setState(s){
+ state=s;
+ phaseT=0;
+ $("aim").hidden=s!=="pitch";
+ marker.visible=s==="field";
+ runner.visible=s==="run";
+ fielder.visible=s==="field";
+ if(s!=="field")catchQueued=false;
+ updateHud();
+}
+
+function start(){
+ difficulty=$("difficulty").value;
+ mode=$("mode").value;
+ position=$("position").value;
+
+ inning=1;
+ half=mode==="field"?"bottom":"top";
+ outs=0;
+ strikes=0;
+ balls=0;
+ score=[0,0];
+ occupied=[false,false,false];
+ powerUp="";
+ powerTurns=0;
+
+ $("panel").hidden=true;
+ paused=false;
+ beginAtBat();
+}
+
+function beginAtBat(){
+ pitchSwing=false;
+ pitchType=pick(["FASTBALL","CURVEBALL","CHANGEUP"]);
+ pitchSpeed=cfg[difficulty].pitch*
+  (pitchType==="CHANGEUP"?.8:pitchType==="FASTBALL"?1.1:1);
+
+ ball.position.set(0,1.6,-19);
+ pitcher.position.set(0,0,-23);
+ batter.visible=half==="top";
+ runner.visible=false;
+ fielder.visible=false;
+
+ setState("intro");
+
+ say(
+  half==="top"?"UP TO BAT":"CPU AT BAT",
+  "Pitcher stepping onto the rubber..."
+ );
+
+ $("power").textContent=powerTurns>0
+  ?`POWER-UP: ${powerUp} (${powerTurns} turns)`
+  :"Mouse aim • Click to swing";
+}
+
+function swing(){
+ if(state!=="pitch"||pitchSwing||half!=="top")return;
+
+ pitchSwing=true;
+
+ const distance=Math.abs(ball.position.z-1.6);
+ const timing=distance/Math.max(8,pitchSpeed*14);
+ const window=cfg[difficulty].window+
+  (powerUp==="GOLDEN BAT"?.16:0);
+
+ if(timing>=window){
+  strikes++;
+  toast("SWING AND A MISS!");
+  finishPitch();
+  return;
+ }
+
+ const quality=clamp(1-timing/(window+.25),.1,1);
+ launchHit(quality,true);
+}
+
+function launchHit(quality,player){
+ const angle=rand(-.95,.95)+aimX*.55;
+ const distance=24+quality*rand(36,98)*
+  (powerUp==="MEGA BAT"&&player?1.35:1);
+
+ let x=Math.sin(angle)*distance;
+ let z=-Math.cos(angle)*distance;
+
+ if(!player&&!(distance>105&&Math.abs(angle)<.78)){
+  const fp=defenders[position];
+  x=fp[0]+rand(-11,11);
+  z=fp[1]+rand(-11,11);
+ }
+
+ const homer=distance>105&&Math.abs(angle)<.78;
+ const fly=quality>.4;
+
+ currentHit={
+  player,homer,fly,distance,
+  flight:fly?2.8+distance/85:1.45,
+  elapsed:0,
+  start:new THREE.Vector3(0,1.4,0),
+  end:new THREE.Vector3(x,.35,z)
+ };
+
+ actualTarget.copy(currentHit.end);
+ predictAccurate=Math.random()<.75;
+ fieldTarget.copy(actualTarget);
+
+ if(!predictAccurate){
+  fieldTarget.x+=rand(-10,10);
+  fieldTarget.z+=rand(-9,9);
+ }
+
+ ball.position.copy(currentHit.start);
+ setState("flight");
+
+ say(
+  homer?"THAT BALL IS CRUSHED!":"BALL IN PLAY!",
+  homer?"GOING, GOING...":"TRACK THE BALL!"
+ );
+
+ if(player){
+  runDist=0;
+  runSpeed=0;
+  runChoice="stop";
+  runTarget=1;
+ }
+}
+
+function finishPitch(){
+ if(strikes>=3){
+  outs++;
+  strikes=0;
+  balls=0;
+  toast("STRIKEOUT!");
+  nextPlay();
+ }else{
+  setState("between");
+  say("STRIKE "+strikes,"Next pitch coming...");
+ }
+}
+
+function walk(){
+ toast("BALL FOUR — WALK!");
+ scoreRun(1);
+ strikes=0;
+ balls=0;
+ nextPlay();
+}
+
+function scoreRun(basesMade){
+ const old=occupied.slice();
+ const next=[false,false,false];
+ const side=half==="top"?0:1;
+
+ for(let i=2;i>=0;i--){
+  if(!old[i])continue;
+  if(i+basesMade>=3)score[side]++;
+  else next[i+basesMade]=true;
+ }
+
+ if(basesMade>=4)score[side]++;
+ else if(basesMade>0)next[basesMade-1]=true;
+
+ occupied=next;
+ updateHud();
+}
+
+function nextPlay(){
+ if(outs>=3){
+  outs=0;
+  strikes=0;
+  balls=0;
+  occupied=[false,false,false];
+
+  if(half==="top")half="bottom";
+  else{
+   half="top";
+   inning++;
+  }
+
+  if(inning>3){
+   setState("gameover");
+   say(
+    score[0]===score[1]?"TIE GAME!":
+    score[0]>score[1]?"YOU WIN!":"CPU WINS!",
+    `${score[0]} – ${score[1]}`
+   );
+   $("panel").hidden=false;
+   $("start").textContent="PLAY AGAIN";
+   return;
+  }
+
+  if(
+   (mode==="bat"&&half==="bottom")||
+   (mode==="field"&&half==="top")
+  ){
+   simulateHalf();
+   return;
+  }
+ }
+
+ setState("between");
+ say(
+  half==="top"?"NEXT BATTER":"CPU COMING UP",
+  `${outs} outs • Inning ${inning}`
+ );
+}
+
+function simulateHalf(){
+ const runs=Math.floor(rand(0,1+cfg[difficulty].hit*4));
+ score[half==="top"?0:1]+=runs;
+ toast(`SIMULATED HALF: ${runs} RUNS`);
+ outs=3;
+ nextPlay();
+}
+
+function beginField(){
+ setState("field");
+
+ const p=defenders[position];
+ fielder.position.set(p[0],0,p[1]);
+ fielder.visible=true;
+
+ marker.position.set(fieldTarget.x,.12,fieldTarget.z);
+ fieldEnd=2.6;
+
+ say(
+  "FIELD THE BALL!",
+  "WASD move • Hold Shift focus • Space dive"
+ );
+
+ $("power").textContent=
+  `${position} • Get within 2 m • Hold Shift to catch`;
+}
+
+function resolveHit(caught){
+ if(caught){
+  outs++;
+  toast("OUT! NICE CATCH!");
+  nextPlay();
+  return;
+ }
+
+ const h=currentHit;
+ let n=h.homer?4:h.distance>77?3:h.distance>46?2:1;
+
+ if(half==="bottom"){
+  scoreRun(n);
+  toast(h.homer?"CPU HOME RUN!":"CPU GETS A HIT!");
+  nextPlay();
+  return;
+ }
+
+ if(h.homer){
+  scoreRun(4);
+
+  powerUp=pick([
+   "MEGA BAT",
+   "GOLDEN BAT",
+   "TURBO CLEATS",
+   "CURVE VISION",
+   "LUCKY GLOVE"
+  ]);
+  powerTurns=3;
+
+  toast(`HOME RUN! POWER-UP: ${powerUp}`);
+  nextPlay();
+  return;
+ }
+
+ runTarget=1;
+ runDist=0;
+ runSpeed=0;
+ runStamina=0;
+ runChoice="stop";
+ sliding=false;
+
+ setState("run");
+ say("RUN TO FIRST!","SPAM SPACE • W ADVANCE • S STOP");
+
+ $("power").textContent=
+  "SPACE SPACE SPACE! • W advance • S stop • Shift slide";
+}
+
+function finishRun(){
+ const n=Math.max(1,runTarget);
+ const defense=cfg[difficulty].defense;
+ const speedNeeded=n===1?5:n===2?9:13;
+
+ const safe=
+  runStamina>speedNeeded+defense*5||
+  Math.random()>(defense*.65+(n-1)*.15)||
+  (sliding&&Math.random()<.18);
+
+ if(!safe){
+  outs++;
+  toast("TAGGED OUT!");
+  nextPlay();
+  return;
+ }
+
+ scoreRun(n);
+ toast(
+  n===1?"SAFE AT FIRST!":
+  n===2?"SAFE AT SECOND!":"SAFE AT THIRD!"
+ );
+ nextPlay();
+}
+
+function ballAt(t){
+ const h=currentHit;
+ const u=clamp(t/h.flight,0,1);
+ const p=h.start.clone().lerp(h.end,u);
+
+ p.y+=h.fly
+  ?Math.sin(u*Math.PI)*(5+h.distance*.15)
+  :Math.sin(u*Math.PI)*2;
+
+ return p;
+}
+
+function fieldDistance(){
+ return Math.hypot(
+  fielder.position.x-actualTarget.x,
+  fielder.position.z-actualTarget.z
+ );
+}
+
+function dive(){
+ if(state!=="field")return;
+
+ const dist=fieldDistance();
+ const toward=new THREE.Vector3(
+  actualTarget.x-fielder.position.x,
+  0,
+  actualTarget.z-fielder.position.z
+ ).normalize();
+
+ fielder.position.addScaledVector(toward,Math.min(3,dist));
+
+ const close=fieldDistance()<3.1;
+
+ if(close&&fieldEnd<1.1){
+  toast("DIVING CATCH!");
+  resolveHit(true);
+ }else{
+  toast(close?"DIVE!":"TOO FAR TO DIVE!");
+ }
+}
+
+function handleKeyDown(e){
+ if(["Space","ArrowUp","ArrowDown"].includes(e.code))
+  e.preventDefault();
+
+ if(e.code==="KeyP"&&state!=="menu"&&state!=="gameover"){
+  paused=!paused;
+  toast(paused?"PAUSED":"PLAY BALL!");
+  return;
+ }
+
+ if(e.code==="Escape"){
+  paused=true;
+  $("panel").hidden=false;
+  return;
+ }
+
+ keys[e.code]=true;
+
+ if(state==="pitch"&&e.code==="Enter")swing();
+
+ if(state==="field"&&e.code==="Space"&&!e.repeat)
+  dive();
+
+ if(
+  state==="field"&&
+  (e.code==="ShiftLeft"||e.code==="ShiftRight")
+ ){
+  focus=true;
+  catchQueued=true;
+ }
+
+ if(state==="run"){
+  if(e.code==="Space"&&!e.repeat){
+   const now=performance.now()/1000;
+
+   if(now-lastSpace>.08){
+    runStamina+=.55;
+    runSpeed=Math.min(13,runSpeed+1.35);
+    lastSpace=now;
+   }
+  }
+
+  if(e.code==="KeyW")runChoice="advance";
+  if(e.code==="KeyS")runChoice="stop";
+
+  if(e.code.startsWith("Shift")){
+   sliding=true;
+   toast("SLIDE READY!");
+  }
+ }
+}
+
+window.addEventListener("keydown",handleKeyDown);
+
+window.addEventListener("keyup",e=>{
+ keys[e.code]=false;
+ if(e.code.startsWith("Shift"))focus=false;
+});
+
+window.addEventListener("mousemove",e=>{
+ aimX=clamp((e.clientX/innerWidth-.5)*2,-1,1);
+ aimY=clamp((e.clientY/innerHeight-.5)*2,-1,1);
+
+ $("aim").style.left=`${50+aimX*14}%`;
+ $("aim").style.top=`${50+aimY*10}%`;
+});
+
+window.addEventListener("click",e=>{
+ if(e.target===renderer.domElement){
+  if(state==="pitch")swing();
+  else if(state==="field")toast("THROW TO BASE!");
+ }
+});
+
+$("start").onclick=start;
+
+function tick(dt){
+ if(paused||state==="menu"||state==="gameover")return;
+
+ phaseT+=dt;
+
+ if(state==="intro"){
+  pitcher.position.z=THREE.MathUtils.lerp(
+   -23,-19,clamp(phaseT/1.7,0,1)
+  );
+
+  smoothCam(
+   phaseT<1.1
+    ?new THREE.Vector3(0,70,18)
+    :new THREE.Vector3(2,3.5,-15),
+   new THREE.Vector3(0,.25,-19),
+   dt,
+   phaseT<1.1?2.2:4
+  );
+
+  if(phaseT>2.4){
+   setState("pitch");
+   say(
+    half==="top"?"TRACK THE PITCH!":"CPU BATTING",
+    pitchType
+   );
+  }
+ }
+
+ else if(state==="pitch"){
+  const z=-19+phaseT*pitchSpeed*12;
+
+  ball.position.set(
+   Math.sin(phaseT*2)*(.2+aimX*.45),
+   1.45+Math.sin(phaseT*3)*.1,
+   z
+  );
+
+  smoothCam(
+   new THREE.Vector3(-1.7,3.4,8.8),
+   new THREE.Vector3(0,1,-15),
+   dt,7
+  );
+
+  if(half==="bottom"&&z>-.5){
+   if(Math.random()<cfg[difficulty].hit){
+    launchHit(rand(.25,.94),false);
+   }else{
+    strikes++;
+    toast("CPU STRIKE!");
+    finishPitch();
+   }
+   return;
+  }
+
+  if(z>3){
+   if(!pitchSwing){
+    if(Math.abs(aimX)>.85){
+     balls++;
+     toast("BALL!");
+
+     if(balls>=4){
+      walk();
+      return;
+     }
+
+     setState("between");
+     say("BALL "+balls,"Next pitch coming...");
+    }else{
+     strikes++;
+     toast("CALLED STRIKE!");
+     finishPitch();
+    }
+   }
+  }
+ }
+
+ else if(state==="flight"){
+  currentHit.elapsed+=dt;
+  ball.position.copy(ballAt(currentHit.elapsed));
+
+  smoothCam(
+   ball.position.clone().add(new THREE.Vector3(0,11,17)),
+   ball.position,
+   dt,2.7
+  );
+
+  if(currentHit.elapsed>=currentHit.flight){
+   if(currentHit.homer){
+    resolveHit(false);
+    return;
+   }
+
+   if(half==="bottom"&&mode!=="bat"&&Math.random()<.9){
+    beginField();
+    return;
+   }
+
+   if(
+    half==="top"&&
+    Math.random()<cfg[difficulty].defense*
+     (currentHit.fly?.55:.3)
+   ){
+    resolveHit(true);
+    return;
+   }
+
+   resolveHit(false);
+  }
+ }
+
+ else if(state==="field"){
+  fieldEnd-=dt;
+
+  const speed=focus?10:16;
+  const dx=Number(!!keys.KeyD)-Number(!!keys.KeyA);
+  const dz=Number(!!keys.KeyS)-Number(!!keys.KeyW);
+  const norm=Math.hypot(dx,dz)||1;
+
+  fielder.position.x+=dx/norm*speed*dt;
+  fielder.position.z+=dz/norm*speed*dt;
+
+  const dist=fieldDistance();
+
+  if(dist<2){
+   fielder.position.x=THREE.MathUtils.lerp(
+    fielder.position.x,actualTarget.x,dt*3.3
+   );
+   fielder.position.z=THREE.MathUtils.lerp(
+    fielder.position.z,actualTarget.z,dt*3.3
+   );
+  }
+
+  if(fieldEnd<1.15&&!predictAccurate){
+   fieldTarget.lerp(actualTarget,dt*5);
+   marker.position.x=fieldTarget.x;
+   marker.position.z=fieldTarget.z;
+  }
+
+  smoothCam(
+   new THREE.Vector3(
+    fielder.position.x,34,fielder.position.z+13
+   ),
+   new THREE.Vector3(
+    fielder.position.x,0,fielder.position.z-5
+   ),
+   dt,5
+  );
+
+  ball.position.copy(actualTarget).add(
+   new THREE.Vector3(0,Math.max(.4,fieldEnd*8),0)
+  );
+
+  if(fieldEnd<=.1){
+   if(catchQueued&&fieldDistance()<2.4){
+    toast("GLOVE CATCH!");
+    resolveHit(true);
+   }else{
+    toast("BALL DROPS!");
+    resolveHit(false);
+   }
+  }
+ }
+
+ else if(state==="run"){
+  const speedBoost=powerUp==="TURBO CLEATS"?1.4:1;
+
+  runSpeed=Math.max(4,runSpeed-dt*3);
+  runDist+=runSpeed*speedBoost*dt;
+  runStamina=Math.max(0,runStamina-dt*.35);
+
+  const total=29.7;
+  const idx=Math.min(3,Math.floor(runDist/total));
+  const u=clamp((runDist%total)/total,0,1);
+
+  const a=bases[idx];
+  const b=bases[Math.min(idx+1,3)];
+
+  runner.position.copy(a.clone().lerp(b,u));
+
+  smoothCam(
+   runner.position.clone().add(new THREE.Vector3(0,6,11)),
+   runner.position.clone().add(new THREE.Vector3(0,1,-5)),
+   dt,5
+  );
+
+  if(runDist>total*.62&&runTarget===1){
+   say(
+    "ROUND FIRST OR STOP?",
+    "W keep running • S stop • Spam SPACE!"
+   );
+  }
+
+  if(runDist>=runTarget*total){
+   if(runChoice==="advance"&&runTarget<3){
+    runTarget++;
+    runChoice="stop";
+    say(
+     `HEADING TO ${runTarget===2?"SECOND":"THIRD"}!`,
+     "Keep tapping Space • S stop • Shift slide"
+    );
+   }else{
+    finishRun();
+   }
+  }
+ }
+
+ else if(state==="between"){
+  smoothCam(
+   new THREE.Vector3(8,24,26),
+   new THREE.Vector3(0,0,-19),
+   dt,3
+  );
+
+  if(phaseT>1.65)beginAtBat();
+ }
+
+ if(powerTurns>0&&state==="intro"&&phaseT<.05){
+  powerTurns--;
+  if(!powerTurns)powerUp="";
+ }
+
+ updateHud();
+}
+
+let last=performance.now();
+
+function frame(now){
+ requestAnimationFrame(frame);
+
+ const dt=Math.min((now-last)/1000,.045);
+ last=now;
+
+ tick(dt);
+ renderer.render(scene,camera);
+}
+
+camera.position.set(0,55,45);
+camera.lookAt(0,0,-22);
+
+requestAnimationFrame(frame);
+
+window.addEventListener("resize",()=>{
+ camera.aspect=innerWidth/innerHeight;
+ camera.updateProjectionMatrix();
+ renderer.setSize(innerWidth,innerHeight);
+});
+
+updateHud();
+</script>
+</body>
+</html>
