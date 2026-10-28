@@ -17,7 +17,9 @@ canvas{display:block}
 #aim:after{content:"+";position:absolute;left:8px;top:1px;font-size:21px}
 #power{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#061729e8;border:1px solid #86a6c5;border-radius:12px;padding:10px 18px;z-index:2;text-align:center;pointer-events:none}
 #panel{position:fixed;inset:0;background:#06121bf0;display:grid;place-items:center;z-index:10;padding:15px;overflow:auto}
-#panel[hidden],#aim[hidden]{display:none}
+#panel[hidden],#aim[hidden],#strikeZone[hidden]{display:none}
+#strikeZone{position:fixed;left:50%;top:50%;width:96px;height:140px;border:3px solid #ffdf79;border-radius:4px;box-shadow:0 0 0 1px #17243a,0 0 16px #ffd96c88,inset 0 0 20px #fff2;pointer-events:none;z-index:2;transform:translate(-50%,-50%)}
+#strikeZone:before,#strikeZone:after{content:"";position:absolute;left:0;right:0;border-top:1px dashed #ffdf7999}#strikeZone:before{top:33%}#strikeZone:after{top:66%}
 #curtain{position:fixed;inset:0;z-index:30;display:grid;place-items:center;background:radial-gradient(circle,#376e4d,#0a241e 75%);transform-origin:bottom;transition:transform 1.3s,opacity 1.3s}
 #curtain.fold{transform:perspective(850px) rotateX(-92deg);opacity:0;pointer-events:none}
 #curtain h1{font-size:clamp(55px,11vw,135px);color:#ffdc79;text-shadow:0 9px 0 #5a361c,0 16px 24px #000b}
@@ -33,7 +35,7 @@ button:hover{filter:brightness(1.13)}
 #start{width:100%;margin-top:20px;background:#eaa92d;color:#101b29;font-size:19px}
 .keys{font-size:13px;line-height:1.7;background:#091d2f;border-radius:10px;padding:12px;margin-top:15px;color:#c8dbef}
 #toast{position:fixed;top:170px;left:50%;transform:translateX(-50%);color:#ffe17b;font-weight:900;font-size:23px;text-shadow:0 2px 8px black;z-index:3;pointer-events:none;text-align:center}
-#help{position:fixed;bottom:12px;right:12px;font-size:12px;background:#061729cf;padding:9px 13px;border-radius:9px;z-index:2;pointer-events:none}
+#pitchControls{position:fixed;bottom:75px;left:50%;transform:translateX(-50%);z-index:4;background:#091d2fee;border:1px solid #7196bb;padding:12px 16px;border-radius:12px;text-align:center;min-width:290px}#pitchControls[hidden]{display:none}#pitchControls button{margin:4px;padding:8px 12px}#pitchControls button.selected{background:#f1b83c;color:#142235}#pitchControls small{display:block;color:#c9e0f4;margin:5px}#help{position:fixed;bottom:12px;right:12px;font-size:12px;background:#061729cf;padding:9px 13px;border-radius:9px;z-index:2;pointer-events:none}
 @media(max-width:700px){#hud{font-size:11px}.chip{padding:7px}#help{display:none}}
 </style>
 </head>
@@ -52,6 +54,8 @@ button:hover{filter:brightness(1.13)}
 </div>
 
 <div id="aim" hidden></div>
+<div id="strikeZone" hidden></div>
+<div id="pitchControls" hidden><b>YOU ARE PITCHING</b><small>1 Fastball • 2 Curveball • 3 Changeup • Move mouse to aim • Enter / Click to throw</small><div><button data-pitch="FASTBALL">1 FASTBALL</button><button data-pitch="CURVEBALL">2 CURVEBALL</button><button data-pitch="CHANGEUP">3 CHANGEUP</button></div><small id="pitchLocation">Aim: middle of strike zone</small></div>
 <div id="toast"></div>
 <div id="power">Choose a mode to begin</div>
 <div id="help"></div>
@@ -95,7 +99,8 @@ button:hover{filter:brightness(1.13)}
 <div class="keys">
 <b>BATTING</b> — Aim with mouse, click or Enter to swing<br>
 <b>BASERUNNING</b> — Spam Space to sprint, W advance, S stop, Shift slide<br>
-<b>FIELDING</b> — WASD move, hold Shift to focus and catch, Space dive<br>
+<b>PITCHER</b> — 1/2/3 choose pitch, mouse aim, Enter/click throw<br>
+<b>FIELDING</b> — WASD move, hold Shift to catch, Space dive<br>
 <b>OTHER</b> — P pause, Escape menu<br><br>
 Fielding has 2-metre catch assistance and a 75% accurate landing prediction.
 </div>
@@ -254,6 +259,7 @@ const pitcher=person(0xd74b50,0,-19);
 const batter=person(0x3478d9,-1.4,1.6);
 const runner=person(0x3478d9,0,0);
 const fielder=person(0x3478d9,0,-42);
+const baseRunners=[first,second,third].map(b=>{const r=person(0x3478d9,b.x, b.z);r.visible=false;return r;});
 
 runner.visible=false;
 fielder.visible=false;
@@ -305,6 +311,9 @@ let score=[0,0];
 let occupied=[false,false,false];
 
 let currentHit=null;
+let ballOwner=null;
+let ballCoveredBy=null;
+let autoCatch=false;
 let runDist=0;
 let runTarget=1;
 let runSpeed=0;
@@ -327,6 +336,10 @@ let firstBroadcast=true;
 let pitchSwing=false;
 let pitchType="";
 let pitchSpeed=1;
+let selectedPitch="FASTBALL";
+let cpuPitchActive=false;
+let cpuSwingDone=false;
+let playerPitchReleased=false;
 let aimX=0;
 let aimY=0;
 
@@ -351,7 +364,12 @@ function toast(t){
  toastTimer=setTimeout(()=>{$("toast").textContent=""},1900);
 }
 
+function syncBaseRunners(){
+ baseRunners.forEach((r,i)=>{r.visible=!!occupied[i];});
+}
+
 function updateHud(){
+ syncBaseRunners();
  $("score").textContent=`YOU ${score[0]} — ${score[1]} CPU`;
  $("stats").textContent=
  `${inning}${half==="top"?" ▲":" ▼"} • ${outs} outs • ${balls}-${strikes}`;
@@ -371,8 +389,11 @@ function setState(s){
  state=s;
  phaseT=0;
  $("aim").hidden=s!=="pitch";
+ $("strikeZone").hidden=s!=="pitch";
+ $("pitchControls").hidden=!(s==="pitch"&&half==="bottom"&&position==="P"&&mode!=="bat");
  marker.visible=s==="field";
  runner.visible=s==="run";
+ syncBaseRunners();
  fielder.visible=s==="field";
  if(s!=="field")catchQueued=false;
  updateHud();
@@ -391,6 +412,7 @@ function start(){
  score=[0,0];
  occupied=[false,false,false];
  firstBroadcast=true;
+ ballOwner=null;
  for(const npc of npcFielders)npc.mesh.position.copy(npc.home);
  powerUp="";
  powerTurns=0;
@@ -402,13 +424,16 @@ function start(){
 
 function beginAtBat(){
  pitchSwing=false;
- pitchType=pick(["FASTBALL","CURVEBALL","CHANGEUP"]);
+ cpuSwingDone=false;
+ playerPitchReleased=false;
+ cpuPitchActive=half==="bottom"&&mode!=="bat";
+ pitchType=cpuPitchActive&&position==="P"?selectedPitch:pick(["FASTBALL","CURVEBALL","CHANGEUP"]);
  pitchSpeed=cfg[difficulty].pitch*
   (pitchType==="CHANGEUP"?.8:pitchType==="FASTBALL"?1.1:1);
 
  ball.position.set(0,1.6,-19);
  pitcher.position.set(0,0,-23);
- batter.visible=half==="top";
+ batter.visible=true;
  runner.visible=false;
  fielder.visible=false;
 
@@ -421,7 +446,7 @@ function beginAtBat(){
 
  $("power").textContent=powerTurns>0
   ?`POWER-UP: ${powerUp} (${powerTurns} turns)`
-  :"Mouse aim • Click to swing";
+  :(cpuPitchActive&&position==="P"?"1/2/3 select pitch • Mouse aim • Enter to throw":"Mouse aim • Click to swing");
 }
 
 function swing(){
@@ -459,12 +484,8 @@ function launchHit(quality,player,timing="good"){
  if(player&&powerUp==="MEGA BAT"&&!foul)distance*=1.2;
  let x=Math.sin(angle)*distance;
  let z=-Math.cos(angle)*distance;
- if(!player && distance<90){
-  // CPU contact varies around the selected defensive position.
-  const fp=defenders[position];
-  x=fp[0]+rand(-17,17);
-  z=fp[1]+rand(-17,17);
- }
+ // CPU contact is independent of the player's position.
+ // The assigned defender is chosen from the actual landing zone.
  const homer=!foul&&distance>108&&Math.abs(angle)<.78;
  const fly=!foul&&quality>.43;
  currentHit={
@@ -479,33 +500,65 @@ function launchHit(quality,player,timing="good"){
  fieldTarget.copy(actualTarget);
  if(!predictAccurate){fieldTarget.x+=rand(-4,4);fieldTarget.z+=rand(-4,4);}
  ball.position.copy(currentHit.start);
+ ballOwner=chooseBallOwner(actualTarget);
+ ballCoveredBy=ballOwner==="2B"?"SS":ballOwner==="SS"?"2B":null;
+ autoCatch=false;
  setState("flight");
  say(foul?"FOUL BALL!":homer?"THAT BALL IS CRUSHED!":
   timing==="late"?"LATE CONTACT — INFIELD!":"BALL IN PLAY!",
   foul?"Heading outside the foul line!":homer?"GOING, GOING...":"FIELDERS ARE MOVING!");
  if(!player&&!homer&&mode!=="bat"){
+  // Human controls only their selected position; all other fielders are NPCs.
   beginField();return;
  }
  if(player){runDist=0;runSpeed=0;runChoice="stop";runTarget=1;}
 }
 
+// Only one assigned defender attacks the ball. The others cover bases.
+function chooseBallOwner(target){
+ const x=target.x,z=target.z;
+ // The outfield is split into three zones, not a nearest-player swarm.
+ if(z < -53 || Math.abs(x)>37 && z < -40){
+  if(x>19)return "RF";
+  if(x< -19)return "LF";
+  return "CF";
+ }
+ // Anything just beyond second belongs to the second baseman on the right,
+ // and shortstop on the left. They cover each other's second-base assignment.
+ if(z < -27 && Math.abs(x)<18)return x>=-3?"2B":"SS";
+ if(x>17)return "1B";
+ if(x< -17)return "3B";
+ if(z> -26)return "P";
+ return x>=0?"2B":"SS";
+}
+
 function moveNPCs(dt){
+ const live=currentHit && (state==="flight"||state==="field");
+ const active=live && !currentHit.foul && !currentHit.homer;
  for(const npc of npcFielders){
   let target=npc.home;
-  if(currentHit && (state==="flight"||state==="field") && !currentHit.foul){
-   // Nearest defenders charge the projected landing point.
-   const d=npc.home.distanceTo(actualTarget);
-   if(d<57)target=actualTarget;
-   else if(d<95)target=npc.home.clone().lerp(actualTarget,.3);
+  if(active){
+   if(npc.id===ballOwner)target=actualTarget;
+   else if(npc.id===ballCoveredBy)target=second;
+   else if(npc.id==="1B")target=first;
+   else if(npc.id==="3B")target=third;
+   else if(npc.id==="SS"||npc.id==="2B")target=second;
   }
+  // When the player is controlling this position, the NPC does not field.
+  if(state==="field" && npc.id===position)continue;
   const delta=target.clone().sub(npc.mesh.position);
   delta.y=0;
   const dist=delta.length();
   if(dist>.15){
-   const step=Math.min(dist,dt*(state==="flight"||state==="field"?15:5));
+   const step=Math.min(dist,dt*(active?19:6));
    npc.mesh.position.addScaledVector(delta.normalize(),step);
    npc.mesh.rotation.y=Math.atan2(delta.x,-delta.z);
   }
+ }
+ // Catch is awarded only to the designated defender, never a nearby bystander.
+ if(active && ballOwner && !(state==="field" && ballOwner===position)){
+  const owner=npcFielders.find(n=>n.id===ballOwner);
+  if(owner && owner.mesh.position.distanceTo(actualTarget)<4.5)autoCatch=true;
  }
 }
 
@@ -610,12 +663,14 @@ function beginField(){
  currentHit.flight=currentHit.elapsed+fieldEnd;
 
  say(
-  "FIELD THE BALL!",
-  "WASD move • Hold Shift focus • Space dive"
+  ballOwner===position?"YOUR BALL — FIELD IT!":"COVER YOUR POSITION!",
+  "WASD move • Shift catch • Space dive"
  );
 
  $("power").textContent=
-  `${position} • Get within 2 m • Hold Shift to catch`;
+  ballOwner===position
+  ?`${position} • YOUR BALL! Hold Shift to catch`
+  :`${ballOwner} fields this ball • Cover your base!`;
 }
 
 function resolveHit(caught){
@@ -725,7 +780,7 @@ function dive(){
 
  const close=fieldDistance()<3.1;
 
- if(close&&fieldEnd<1.35){
+ if(ballOwner===position&&close&&fieldEnd<1.35){
   toast("DIVING CATCH!");
   resolveHit(true);
  }else{
@@ -751,7 +806,14 @@ function handleKeyDown(e){
 
  keys[e.code]=true;
 
- if(state==="pitch"&&e.code==="Enter")swing();
+ if(state==="pitch"&&e.code==="Enter"){
+  if(cpuPitchActive&&position==="P")releasePitch();
+  else swing();
+ }
+ if(cpuPitchActive&&state==="pitch"&&position==="P"){
+  const pitches={Digit1:"FASTBALL",Digit2:"CURVEBALL",Digit3:"CHANGEUP"};
+  if(pitches[e.code])choosePitch(pitches[e.code]);
+ }
 
  if(state==="field"&&e.code==="Space"&&!e.repeat)
   dive();
@@ -798,15 +860,34 @@ window.addEventListener("mousemove",e=>{
 
  $("aim").style.left=`${50+aimX*14}%`;
  $("aim").style.top=`${50+aimY*10}%`;
+ $("pitchLocation").textContent=`Aim: ${aimX<-.3?"inside left":aimX>.3?"outside right":"centre"}, ${aimY<-.3?"high":aimY>.3?"low":"middle"}`;
 });
 
 window.addEventListener("click",e=>{
  if(e.target===renderer.domElement){
-  if(state==="pitch")swing();
+  if(state==="pitch"){
+   if(cpuPitchActive&&position==="P")releasePitch();
+   else swing();
+  }
   else if(state==="field")toast("THROW TO BASE!");
  }
 });
 
+function choosePitch(type){
+ selectedPitch=type;
+ pitchType=type;
+ pitchSpeed=cfg[difficulty].pitch*(type==="CHANGEUP"?.78:type==="FASTBALL"?1.13:.93);
+ document.querySelectorAll("[data-pitch]").forEach(b=>b.classList.toggle("selected",b.dataset.pitch===type));
+}
+function releasePitch(){
+ if(state!=="pitch"||!cpuPitchActive||position!=="P"||playerPitchReleased)return;
+ playerPitchReleased=true;
+ phaseT=0;
+ ball.position.set(0,1.6,-19);
+ say("PITCH AWAY!",`${pitchType} • CPU batter watching the ball`);
+}
+document.querySelectorAll("[data-pitch]").forEach(b=>b.onclick=()=>choosePitch(b.dataset.pitch));
+choosePitch(selectedPitch);
 $("start").onclick=start;
 
 function tick(dt){
@@ -829,8 +910,8 @@ function tick(dt){
    camLook=new THREE.Vector3(0,1.5,-19);
    if(phaseT<.15 || (overview&&phaseT<2.85))say("ON THE MOUND","Pitcher getting ready...");
   }else{
-   camPos=new THREE.Vector3(-1.7,3.4,8.8);
-   camLook=new THREE.Vector3(0,1,-15);
+   camPos=new THREE.Vector3(0.7,2.9,8.8);
+   camLook=new THREE.Vector3(0.7,1,-15);
    if(phaseT<(overview?5.1:1.9))say("BATTER READY","Pitch coming in two seconds...");
   }
   pitcher.position.z=THREE.MathUtils.lerp(-23,-19,clamp(phaseT/2,0,1));
@@ -838,32 +919,52 @@ function tick(dt){
   if(phaseT>(overview?7:3.8)){
    firstBroadcast=false;
    setState("pitch");
-   say(half==="top"?"TRACK THE PITCH!":"CPU BATTING",pitchType);
+   say(half==="top"?"TRACK THE PITCH!":position==="P"?"CHOOSE YOUR PITCH":"CPU BATTING",position==="P"&&half==="bottom"?"1/2/3 choose • Aim with mouse • Enter throw":pitchType);
+   if(half==="bottom"&&position==="P")choosePitch(selectedPitch);
   }
  }
 
  else if(state==="pitch"){
+  if(cpuPitchActive&&position==="P"&&!playerPitchReleased){
+   phaseT=0;
+   smoothCam(new THREE.Vector3(.7,2.9,8.8),new THREE.Vector3(.7,1,-15),dt,7);
+   return;
+  }
   const z=-19+phaseT*pitchSpeed*12;
+  // Project the strike zone at home plate into the current camera.
+  const zoneScreen=new THREE.Vector3(0,1.45,1.6).project(camera);
+  $("strikeZone").style.left=`${(zoneScreen.x*.5+.5)*100}%`;
+  $("strikeZone").style.top=`${(-zoneScreen.y*.5+.5)*100}%`;
 
   ball.position.set(
-   Math.sin(phaseT*2)*(.2+aimX*.45),
-   1.45+Math.sin(phaseT*3)*.1,
+   cpuPitchActive&&position==="P"?aimX*1.35*clamp((z+19)/20,0,1):Math.sin(phaseT*2)*(.2+aimX*.45),
+   cpuPitchActive&&position==="P"?1.45-aimY*.9*clamp((z+19)/20,0,1):1.45+Math.sin(phaseT*3)*.1,
    z
   );
 
   smoothCam(
-   new THREE.Vector3(-1.7,3.4,8.8),
-   new THREE.Vector3(0,1,-15),
+   new THREE.Vector3(0.7,2.9,8.8),
+   new THREE.Vector3(0.7,1,-15),
    dt,7
   );
 
-  if(half==="bottom"&&z>-.5){
-   if(Math.random()<cfg[difficulty].hit){
-    launchHit(rand(.25,.94),false);
-   }else{
+  if(cpuPitchActive&&!cpuSwingDone&&z>=-1.6){
+   cpuSwingDone=true;
+   const inZone=Math.abs(ball.position.x)<1.05&&ball.position.y>.55&&ball.position.y<2.45;
+   const swingChance=inZone?.82:.34;
+   const makesContact=Math.random()<swingChance*cfg[difficulty].hit;
+   if(makesContact){
+    const quality=rand(.25,.95);
+    launchHit(quality,false);
+   }else if(inZone||Math.random()<swingChance){
     strikes++;
-    toast("CPU STRIKE!");
+    toast("CPU SWINGS AND MISSES!");
     finishPitch();
+   }else{
+    balls++;
+    toast("CPU TAKES A BALL!");
+    if(balls>=4)walk();
+    else {setState("between");say("BALL "+balls,"CPU waits for the next pitch");}
    }
    return;
   }
@@ -913,8 +1014,7 @@ function tick(dt){
     return;
    }
 
-   const nearest=Math.min(...npcFielders.map(n=>n.mesh.position.distanceTo(actualTarget)));
-   if(half==="top" && nearest<4.3 && currentHit.fly){
+   if(half==="top" && autoCatch && currentHit.fly){
     resolveHit(true);
     return;
    }
@@ -963,12 +1063,12 @@ function tick(dt){
 
   currentHit.elapsed+=dt;
   ball.position.copy(ballAt(currentHit.elapsed));
-  if(catchQueued&&fieldDistance()<2.8&&fieldEnd<.65){
+  if(ballOwner===position&&catchQueued&&fieldDistance()<2.8&&fieldEnd<.65){
    toast("GLOVE CATCH!");resolveHit(true);return;
   }
 
   if(fieldEnd<=0){
-   if(catchQueued&&fieldDistance()<3.1){
+   if((ballOwner===position&&catchQueued&&fieldDistance()<3.1) || (ballOwner!==position&&autoCatch&&currentHit.fly)){
     toast("GLOVE CATCH!");
     resolveHit(true);
    }else{
