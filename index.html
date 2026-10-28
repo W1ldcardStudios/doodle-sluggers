@@ -270,8 +270,12 @@ const defenders={
  RF:[48,-62]
 };
 
+const npcFielders=[];
 for(const [id,p] of Object.entries(defenders)){
- if(id!=="P"&&id!=="C")person(0xd74b50,p[0],p[1]);
+ if(id!=="P"&&id!=="C"){
+  const mesh=person(0xd74b50,p[0],p[1]);
+  npcFielders.push({id,mesh,home:new THREE.Vector3(p[0],0,p[1])});
+ }
 }
 
 const ball=sphere(.35,white,0,1.5,-19);
@@ -319,6 +323,7 @@ let fieldTarget=new THREE.Vector3();
 let actualTarget=new THREE.Vector3();
 let predictAccurate=true;
 
+let firstBroadcast=true;
 let pitchSwing=false;
 let pitchType="";
 let pitchSpeed=1;
@@ -385,6 +390,8 @@ function start(){
  balls=0;
  score=[0,0];
  occupied=[false,false,false];
+ firstBroadcast=true;
+ for(const npc of npcFielders)npc.mesh.position.copy(npc.home);
  powerUp="";
  powerTurns=0;
 
@@ -419,76 +426,86 @@ function beginAtBat(){
 
 function swing(){
  if(state!=="pitch"||pitchSwing||half!=="top")return;
-
  pitchSwing=true;
-
- const distance=Math.abs(ball.position.z-1.6);
- const timing=distance/Math.max(8,pitchSpeed*14);
- const window=cfg[difficulty].window+
-  (powerUp==="GOLDEN BAT"?.16:0);
-
- if(timing>=window){
-  strikes++;
-  toast("SWING AND A MISS!");
-  finishPitch();
-  return;
+ const z=ball.position.z;
+ // Pitch arrives at home plate near z=1.6.
+ if(z < -9 || z > 3.5){
+  strikes++;toast("SWING AND A MISS!");finishPitch();return;
  }
-
- const quality=clamp(1-timing/(window+.25),.1,1);
- launchHit(quality,true);
+ // Early contact slices foul; late contact stays in the infield.
+ const timing=z < -2.6 ? "early" : z > 1.1 ? "late" : "good";
+ const quality=timing==="good"
+  ?clamp(1-Math.abs(z-.1)/4.5,.5,1)
+  :timing==="late"?rand(.12,.28):rand(.22,.42);
+ launchHit(quality,true,timing);
 }
 
-function launchHit(quality,player){
- const angle=rand(-.95,.95)+aimX*.55;
- const distance=24+quality*rand(36,98)*
-  (powerUp==="MEGA BAT"&&player?1.35:1);
-
+function launchHit(quality,player,timing="good"){
+ let angle=rand(-.9,.9)+aimX*.32;
+ let distance;
+ let foul=false;
+ if(player && timing==="early"){
+  foul=true;
+  angle=(Math.random()<.5?-1:1)*rand(1.25,1.65);
+  distance=rand(25,66);
+ }else if(player && timing==="late"){
+  distance=rand(11,34);
+  angle=rand(-1.05,1.05);
+ }else if(player){
+  distance=rand(56,99)+quality*rand(20,55);
+ }else{
+  distance=rand(19,108);
+ }
+ if(player&&powerUp==="MEGA BAT"&&!foul)distance*=1.2;
  let x=Math.sin(angle)*distance;
  let z=-Math.cos(angle)*distance;
-
- if(!player&&!(distance>105&&Math.abs(angle)<.78)){
+ if(!player && distance<90){
+  // CPU contact varies around the selected defensive position.
   const fp=defenders[position];
-  x=fp[0]+rand(-11,11);
-  z=fp[1]+rand(-11,11);
+  x=fp[0]+rand(-17,17);
+  z=fp[1]+rand(-17,17);
  }
-
- const homer=distance>105&&Math.abs(angle)<.78;
- const fly=quality>.4;
-
+ const homer=!foul&&distance>108&&Math.abs(angle)<.78;
+ const fly=!foul&&quality>.43;
  currentHit={
-  player,homer,fly,distance,
-  flight:fly?2.8+distance/85:1.45,
+  player,homer,fly,foul,distance,
+  flight:fly?2.6+distance/85:1.6+distance/130,
   elapsed:0,
   start:new THREE.Vector3(0,1.4,0),
   end:new THREE.Vector3(x,.35,z)
  };
-
  actualTarget.copy(currentHit.end);
- predictAccurate=Math.random()<.75;
+ predictAccurate=Math.random()<.8;
  fieldTarget.copy(actualTarget);
-
- if(!predictAccurate){
-  fieldTarget.x+=rand(-5,5);
-  fieldTarget.z+=rand(-5,5);
- }
-
+ if(!predictAccurate){fieldTarget.x+=rand(-4,4);fieldTarget.z+=rand(-4,4);}
  ball.position.copy(currentHit.start);
  setState("flight");
-
- say(
-  homer?"THAT BALL IS CRUSHED!":"BALL IN PLAY!",
-  homer?"GOING, GOING...":"TRACK THE BALL!"
- );
-
+ say(foul?"FOUL BALL!":homer?"THAT BALL IS CRUSHED!":
+  timing==="late"?"LATE CONTACT — INFIELD!":"BALL IN PLAY!",
+  foul?"Heading outside the foul line!":homer?"GOING, GOING...":"FIELDERS ARE MOVING!");
  if(!player&&!homer&&mode!=="bat"){
-  beginField();
-  return;
+  beginField();return;
  }
- if(player){
-  runDist=0;
-  runSpeed=0;
-  runChoice="stop";
-  runTarget=1;
+ if(player){runDist=0;runSpeed=0;runChoice="stop";runTarget=1;}
+}
+
+function moveNPCs(dt){
+ for(const npc of npcFielders){
+  let target=npc.home;
+  if(currentHit && (state==="flight"||state==="field") && !currentHit.foul){
+   // Nearest defenders charge the projected landing point.
+   const d=npc.home.distanceTo(actualTarget);
+   if(d<57)target=actualTarget;
+   else if(d<95)target=npc.home.clone().lerp(actualTarget,.3);
+  }
+  const delta=target.clone().sub(npc.mesh.position);
+  delta.y=0;
+  const dist=delta.length();
+  if(dist>.15){
+   const step=Math.min(dist,dt*(state==="flight"||state==="field"?15:5));
+   npc.mesh.position.addScaledVector(delta.normalize(),step);
+   npc.mesh.rotation.y=Math.atan2(delta.x,-delta.z);
+  }
  }
 }
 
@@ -796,27 +813,32 @@ function tick(dt){
  if(paused||state==="menu"||state==="gameover")return;
 
  phaseT+=dt;
+ moveNPCs(dt);
 
  if(state==="intro"){
-  pitcher.position.z=THREE.MathUtils.lerp(
-   -23,-19,clamp(phaseT/1.7,0,1)
-  );
-
-  smoothCam(
-   phaseT<1.1
-    ?new THREE.Vector3(0,70,18)
-    :new THREE.Vector3(2,3.5,-15),
-   new THREE.Vector3(0,.25,-19),
-   dt,
-   phaseT<1.1?2.2:4
-  );
-
-  if(phaseT>2.4){
+  const overview=firstBroadcast;
+  // First at-bat: field overview, pitcher close-up, then batter.
+  // Later at-bats: skip the field-wide broadcast.
+  let camPos,camLook;
+  if(overview && phaseT<2.7){
+   camPos=new THREE.Vector3(0,88,48);
+   camLook=new THREE.Vector3(0,0,-37);
+   say("WELCOME TO DOODLE SLUGGERS!","Here's your starting lineup!");
+  }else if(phaseT<(overview?5:1.8)){
+   camPos=new THREE.Vector3(6,4,-13);
+   camLook=new THREE.Vector3(0,1.5,-19);
+   if(phaseT<.15 || (overview&&phaseT<2.85))say("ON THE MOUND","Pitcher getting ready...");
+  }else{
+   camPos=new THREE.Vector3(-1.7,3.4,8.8);
+   camLook=new THREE.Vector3(0,1,-15);
+   if(phaseT<(overview?5.1:1.9))say("BATTER READY","Pitch coming in two seconds...");
+  }
+  pitcher.position.z=THREE.MathUtils.lerp(-23,-19,clamp(phaseT/2,0,1));
+  smoothCam(camPos,camLook,dt,overview?2.5:4);
+  if(phaseT>(overview?7:3.8)){
+   firstBroadcast=false;
    setState("pitch");
-   say(
-    half==="top"?"TRACK THE PITCH!":"CPU BATTING",
-    pitchType
-   );
+   say(half==="top"?"TRACK THE PITCH!":"CPU BATTING",pitchType);
   }
  }
 
@@ -879,21 +901,20 @@ function tick(dt){
   );
 
   if(currentHit.elapsed>=currentHit.flight){
+   if(currentHit.foul){
+    strikes=Math.min(2,strikes+1);
+    toast("FOUL BALL!");
+    setState("between");
+    say("FOUL BALL", "Another pitch coming...");
+    return;
+   }
    if(currentHit.homer){
     resolveHit(false);
     return;
    }
 
-   if(half==="bottom"&&mode!=="bat"&&Math.random()<.9){
-    beginField();
-    return;
-   }
-
-   if(
-    half==="top"&&
-    Math.random()<cfg[difficulty].defense*
-     (currentHit.fly?.55:.3)
-   ){
+   const nearest=Math.min(...npcFielders.map(n=>n.mesh.position.distanceTo(actualTarget)));
+   if(half==="top" && nearest<4.3 && currentHit.fly){
     resolveHit(true);
     return;
    }
