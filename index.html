@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -19,6 +18,10 @@ canvas{display:block}
 #power{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#061729e8;border:1px solid #86a6c5;border-radius:12px;padding:10px 18px;z-index:2;text-align:center;pointer-events:none}
 #panel{position:fixed;inset:0;background:#06121bf0;display:grid;place-items:center;z-index:10;padding:15px;overflow:auto}
 #panel[hidden],#aim[hidden]{display:none}
+#curtain{position:fixed;inset:0;z-index:30;display:grid;place-items:center;background:radial-gradient(circle,#376e4d,#0a241e 75%);transform-origin:bottom;transition:transform 1.3s,opacity 1.3s}
+#curtain.fold{transform:perspective(850px) rotateX(-92deg);opacity:0;pointer-events:none}
+#curtain h1{font-size:clamp(55px,11vw,135px);color:#ffdc79;text-shadow:0 9px 0 #5a361c,0 16px 24px #000b}
+#curtain p{text-align:center;font-weight:800;letter-spacing:.3em}
 #menu{width:min(620px,96vw);background:#142a40;border:1px solid #628db1;border-radius:20px;padding:24px}
 h1{font-size:clamp(28px,6vw,45px);margin:0;color:#ffd16e}
 p{color:#d0e0ef}
@@ -36,6 +39,7 @@ button:hover{filter:brightness(1.13)}
 </head>
 <body>
 
+<div id="curtain"><div style="text-align:center"><div style="font-size:80px">⚾</div><h1>PLAY BALL!</h1><p>DOODLE SLUGGERS</p></div></div>
 <div id="hud">
 <div class="chip" id="score">YOU 0 — 0 CPU</div>
 <div class="chip" id="stats">1 ▲ • 0 outs</div>
@@ -464,8 +468,8 @@ function launchHit(quality,player){
  fieldTarget.copy(actualTarget);
 
  if(!predictAccurate){
-  fieldTarget.x+=rand(-10,10);
-  fieldTarget.z+=rand(-9,9);
+  fieldTarget.x+=rand(-5,5);
+  fieldTarget.z+=rand(-5,5);
  }
 
  ball.position.copy(currentHit.start);
@@ -476,6 +480,10 @@ function launchHit(quality,player){
   homer?"GOING, GOING...":"TRACK THE BALL!"
  );
 
+ if(!player&&!homer&&mode!=="bat"){
+  beginField();
+  return;
+ }
  if(player){
   runDist=0;
   runSpeed=0;
@@ -524,6 +532,7 @@ function scoreRun(basesMade){
 }
 
 function nextPlay(){
+ strikes=0;balls=0;
  if(outs>=3){
   outs=0;
   strikes=0;
@@ -580,7 +589,8 @@ function beginField(){
  fielder.visible=true;
 
  marker.position.set(fieldTarget.x,.12,fieldTarget.z);
- fieldEnd=2.6;
+ fieldEnd=Math.max(2.8,currentHit.flight-currentHit.elapsed);
+ currentHit.flight=currentHit.elapsed+fieldEnd;
 
  say(
   "FIELD THE BALL!",
@@ -698,7 +708,7 @@ function dive(){
 
  const close=fieldDistance()<3.1;
 
- if(close&&fieldEnd<1.1){
+ if(close&&fieldEnd<1.35){
   toast("DIVING CATCH!");
   resolveHit(true);
  }else{
@@ -895,7 +905,7 @@ function tick(dt){
  else if(state==="field"){
   fieldEnd-=dt;
 
-  const speed=focus?10:16;
+  const speed=focus?17:23;
   const dx=Number(!!keys.KeyD)-Number(!!keys.KeyA);
   const dz=Number(!!keys.KeyS)-Number(!!keys.KeyW);
   const norm=Math.hypot(dx,dz)||1;
@@ -914,7 +924,7 @@ function tick(dt){
    );
   }
 
-  if(fieldEnd<1.15&&!predictAccurate){
+  if(fieldEnd<1.5&&!predictAccurate){
    fieldTarget.lerp(actualTarget,dt*5);
    marker.position.x=fieldTarget.x;
    marker.position.z=fieldTarget.z;
@@ -930,12 +940,14 @@ function tick(dt){
    dt,5
   );
 
-  ball.position.copy(actualTarget).add(
-   new THREE.Vector3(0,Math.max(.4,fieldEnd*8),0)
-  );
+  currentHit.elapsed+=dt;
+  ball.position.copy(ballAt(currentHit.elapsed));
+  if(catchQueued&&fieldDistance()<2.8&&fieldEnd<.65){
+   toast("GLOVE CATCH!");resolveHit(true);return;
+  }
 
-  if(fieldEnd<=.1){
-   if(catchQueued&&fieldDistance()<2.4){
+  if(fieldEnd<=0){
+   if(catchQueued&&fieldDistance()<3.1){
     toast("GLOVE CATCH!");
     resolveHit(true);
    }else{
@@ -1030,6 +1042,7 @@ window.addEventListener("resize",()=>{
 });
 
 updateHud();
+setTimeout(()=>document.getElementById("curtain").classList.add("fold"),1450);
 </script>
 </body>
 </html>
